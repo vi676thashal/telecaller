@@ -1,0 +1,52 @@
+{
+  "name": "securevoice-ai-backend",
+  "version": "1.0.0",
+  "description": "Node.js backend for SecureVoice AI telecaller application",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:server-only": "node server.js",
+    "start:with-db": "node start-database.js && node server.js",
+    "start:old": "node enhanced-database-startup.js",
+    "dev": "nodemon server.js",
+    "setup": "node create-default-scripts.js",
+    "test": "echo \"Backend tests not implemented yet\"",
+    "test:calls": "node test-outbound-calls.js",
+    "test:websocket": "node test-websocket.js",
+    "test:protocol": "node PROTOCOL-FIXED-TEST-CALL.js",
+    "check-status": "node CHECK-PROTOCOL-FIX-STATUS.js",
+    "db:start": "node start-database.js",
+    "db:check": "node test-database-connection.js"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "^4.2.0",
+    "@google-cloud/speech": "^5.6.0",
+    "@google-cloud/text-to-speech": "^6.1.0",
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.9.0",
+    "bcryptjs": "^2.4.3",
+    "colors": "^1.4.0",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "express-fileupload": "^1.4.0",
+    "express-validator": "^7.0.1",
+    "form-data": "^4.0.2",
+    "jsonwebtoken": "^9.0.0",
+    "mongoose": "^7.8.7",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.104.0",
+    "socket.io": "^4.6.1",
+    "twilio": "^5.7.0",
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0",
+    "ws": "^8.13.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

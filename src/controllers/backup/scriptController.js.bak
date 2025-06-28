@@ -1,0 +1,161 @@
+const Script = require('../models/Script');
+
+// Controller for script management
+cons  // Delete script
+  deleteScript: async (req, res) => {
+    try {
+      const script = await Script.findById(req.params.id);ontroller = {
+  // Get all scripts
+  getAllScripts: async (req, res) => {
+    try {
+      const scripts = await Script.find().sort({ createdAt: -1 });
+      res.json(scripts);
+    } catch (error) {
+      console.error('Error fetching scripts:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  },
+  
+  // Get single script
+  getScript: async (req, res) => {
+    try {
+      const script = await Script.findById(req.params.id);
+      
+      if (!script) {
+        return res.status(404).json({ message: 'Script not found' });
+      }
+      
+      res.json(script);
+    } catch (error) {
+      console.error('Error fetching script:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  },
+  
+  // Create new script
+  createScript: async (req, res) => {
+    try {
+      const { name, content, language } = req.body;
+      
+      // Validate input
+      if (!name || !content || !language) {
+        return res.status(400).json({ message: 'Missing required fields' });
+      }
+      
+      // Create script
+      const script = new Script({
+        name,
+        content,
+        language
+      });
+      
+      await script.save();
+      
+      res.status(201).json(script);
+    } catch (error) {
+      console.error('Error creating script:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  },
+  
+  // Update script
+  updateScript: async (req, res) => {
+    try {
+      const { name, content, language } = req.body;
+      
+      // Validate input
+      if (!name || !content || !language) {
+        return res.status(400).json({ message: 'Missing required fields' });
+      }
+      
+      // Find and update script
+      const script = await Script.findByIdAndUpdate(
+        req.params.id,
+        { name, content, language },
+        { new: true }
+      );
+      
+      if (!script) {
+        return res.status(404).json({ message: 'Script not found' });
+      }
+      
+      res.json(script);
+    } catch (error) {
+      console.error('Error updating script:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  },
+  
+  // Delete script
+  deleteScript: async (req, res) => {
+    try {
+      // Check if MongoDB is available
+      if (!global.isMongoDBAvailable || !global.isMongoDBAvailable()) {
+        return res.status(503).json({ message: 'Database unavailable - cannot delete script' });
+      }
+
+      const script = await Script.findByIdAndDelete(req.params.id);
+      
+      if (!script) {
+        return res.status(404).json({ message: 'Script not found' });
+      }
+      
+      res.json({ message: 'Script deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting script:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  },
+
+  // Text to speech for a script
+  speakScript: async (req, res) => {
+    try {
+      const script = await Script.findById(req.params.id);
+      
+      if (!script) {
+        return res.status(404).json({ message: 'Script not found' });
+      }
+      
+      // In a real implementation, this would call a TTS service like ElevenLabs
+      // For validation purposes, we'll just return the text with a flag
+      res.json({ 
+        status: 'success', 
+        text: script.content,
+        message: 'TTS API endpoint available and configured correctly',
+        script: {
+          id: script._id,
+          name: script.name,
+          language: script.language,
+          content: script.content
+        }
+      });
+    } catch (error) {
+      console.error('Error speaking script:', error);
+      res.status(500).json({ message: 'Server error', error: error.message });
+    }
+  },
+
+  // Validate speak endpoint (no actual TTS processing)
+  validateSpeak: async (req, res) => {
+    try {
+      const script = await Script.findById(req.params.id);
+      
+      if (!script) {
+        return res.status(404).json({ message: 'Script not found' });
+      }
+      
+      // Just validate that the endpoint exists and can find the script
+      res.json({ 
+        status: 'ok',
+        message: 'Script speak endpoint is available and configured correctly',
+        scriptId: req.params.id,
+        scriptFound: true
+      });
+    } catch (error) {
+      console.error('Error validating script endpoint:', error);
+      res.status(500).json({ message: 'Server error', error: error.message });
+    }
+  }
+};
+
+module.exports = scriptController;

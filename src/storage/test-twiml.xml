@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Testing Twilio voice call.</Say>
+  <Play>https://6127-103-122-147-242.ngrok-free.app/audio/ngrok_test_1749107447459.mp3</Play>
+</Response>

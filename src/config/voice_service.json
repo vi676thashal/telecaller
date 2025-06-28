@@ -1,0 +1,5 @@
+{
+  "voiceServicePort": 8000,
+  "retryAttempts": 3,
+  "timeout": 10000
+}

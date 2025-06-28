@@ -1,0 +1,27 @@
+[
+  {
+    "id": "script_001",
+    "content": "Welcome to SecureVoiceAI. Please state your request clearly.",
+    "language": "english",
+    "category": "greeting",
+    "createdAt": "2024-01-15T00:00:00.000Z",
+    "updatedAt": "2025-06-16T07:04:52.812Z"
+  },
+  {
+    "id": "script_002",
+    "content": "For security purposes, please provide your authentication code.",
+    "language": "english",
+    "category": "security",
+    "createdAt": "2024-01-20T00:00:00.000Z",
+    "updatedAt": "2025-06-16T07:04:52.812Z"
+  },
+  {
+    "id": "684bca3e524beb000ced5fd4",
+    "name": "ai",
+    "content": "Hello, this is Pooja, your virtual assistant from secureswipe . am I speaking with vishal ?",
+    "language": "english",
+    "category": "general",
+    "createdAt": "2025-06-13T06:50:38.100Z",
+    "updatedAt": "2025-06-13T08:34:34.914Z"
+  }
+]
