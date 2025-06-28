@@ -1,0 +1,331 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+const fileUpload = require('express-fileupload');
+const WebSocket = require('ws');
+const routes = require('./routes');
+const setupWebSocketServer = require('./websocket/handlers'); // For general /ws
+const MediaWebSocketHandler = require('./websocket/mediaHandler'); // For Twilio /media
+const callController = require('./controllers/callController'); // Singleton instance
+const voiceCloneWebSocketHandler = require('./services/voiceCloneWebSocketHandler'); // For voice clone /ws
+const voiceCloneSystemRoutes = require('./routes/voiceCloneSystemRoutes'); // Voice cloning routes
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Startup logging
+console.log('Starting server with configuration:', {
+  NODE_ENV: process.env.NODE_ENV,
+  PORT: PORT,
+  MONGODB_URI: process.env.MONGODB_URI,
+});
+
+// Express middleware
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3001', 'http://127.0.0.1:3001'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Request logging
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+// File upload configuration
+app.use(fileUpload({
+  useTempFiles: true,
+  tempFileDir: path.join(__dirname, 'storage/uploads'),
+  createParentPath: true
+}));
+
+// Ensure storage directories exist
+const uploadDir = path.join(__dirname, 'storage/uploads');
+const transcriptDir = path.join(__dirname, 'storage/transcripts');
+if (!require('fs').existsSync(uploadDir)) {
+  require('fs').mkdirSync(uploadDir, { recursive: true });
+}
+
+// Pre-initialize voice cloning service as early as possible
+const voiceCloneRealTimeService = require('./services/voiceCloneRealTimeService');
+const fs = require('fs');
+const { exec } = require('child_process');
+
+// Helper function to check FFmpeg installation
+const checkFfmpegInstallation = () => {
+  return new Promise((resolve) => {
+    exec('ffmpeg -version', (error, stdout) => {
+      if (error) {
+        console.log('[app] FFmpeg not found in system PATH, will check local installation');
+        resolve(false);
+        return;
+      }
+      console.log('[app] FFmpeg found in system PATH:', stdout.split('\n')[0]);
+      resolve(true);
+    });
+  });
+};
+
+// Ensure FFmpeg is available before initializing voice cloning
+(async () => {
+  try {
+    console.log('[app] Checking FFmpeg availability...');
+    const ffmpegInPath = await checkFfmpegInstallation();
+    
+    if (!ffmpegInPath) {
+      // Check if FFmpeg is in the expected directories
+      const ffmpegPaths = [
+        path.join(__dirname, '..', 'voice_cloning_service', 'ffmpeg.exe'),
+        path.join(__dirname, '..', '..', 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe'),
+        path.join(__dirname, '..', 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe')
+      ];
+      
+      let ffmpegFound = false;
+      for (const ffmpegPath of ffmpegPaths) {
+        if (fs.existsSync(ffmpegPath)) {
+          console.log(`[app] FFmpeg found at: ${ffmpegPath}`);
+          ffmpegFound = true;
+          
+          // Add FFmpeg to process environment PATH
+          process.env.PATH = `${path.dirname(ffmpegPath)}${path.delimiter}${process.env.PATH}`;
+          break;
+        }
+      }
+      
+      if (!ffmpegFound) {
+        console.error('[app] FFmpeg not found in expected locations, voice cloning may not work correctly');
+      }
+    }
+    
+    // Now initialize voice cloning service
+    console.log('[app] Pre-initializing voice cloning service...');
+    await voiceCloneRealTimeService.isServiceReady();
+    
+    // Verify FFmpeg is working in voice cloning service
+    try {
+      const healthDetails = await voiceCloneRealTimeService.voiceCloneClient.healthCheckDetailed();
+      console.log(`[app] Voice cloning FFmpeg availability: ${healthDetails.ffmpeg_available}`);
+      console.log(`[app] Voice cloning FFmpeg path: ${healthDetails.ffmpeg_path}`);
+      console.log(`[app] Voice cloning service pre-initialization complete`);
+    } catch (healthError) {
+      console.error('[app] Could not get detailed health check:', healthError.message);
+      console.log('[app] Voice cloning service pre-initialization complete with unknown FFmpeg status');
+    }
+  } catch (error) {
+    console.error('[app] Voice cloning service pre-initialization error:', error);
+  }
+})();
+if (!require('fs').existsSync(transcriptDir)) {
+  require('fs').mkdirSync(transcriptDir, { recursive: true });
+}
+
+// Static files
+const audioDir = path.join(__dirname, 'storage/audio');
+const publicDir = path.join(__dirname, 'public');
+if (!require('fs').existsSync(audioDir)) {
+  require('fs').mkdirSync(audioDir, { recursive: true });
+}
+if (!require('fs').existsSync(publicDir)) {
+  require('fs').mkdirSync(publicDir, { recursive: true });
+}
+
+app.use('/uploads', express.static(uploadDir));
+app.use('/transcripts', express.static(transcriptDir));
+
+// Custom middleware for serving audio files with correct Content-Type headers for Twilio
+app.use('/audio', (req, res, next) => {
+  const filePath = path.join(audioDir, req.path);
+  
+  // Check if file exists
+  if (fs.existsSync(filePath)) {
+    const ext = path.extname(filePath).toLowerCase();
+    let contentType = 'application/octet-stream'; // Default content type
+    
+    // Try to read metadata file if it exists
+    const metaFilePath = `${filePath}.meta`;
+    if (fs.existsSync(metaFilePath)) {
+      try {
+        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+        if (metadata.contentType) {
+          contentType = metadata.contentType;
+          console.log(`Using content type from metadata: ${contentType} for ${path.basename(filePath)}`);
+        }
+      } catch (err) {
+        console.error(`Error reading metadata for ${path.basename(filePath)}:`, err.message);
+      }
+    } else {
+      // Set the correct Content-Type based on file extension
+      if (ext === '.mp3') {
+        contentType = 'audio/mpeg';
+      } else if (ext === '.wav') {
+        contentType = 'audio/wav';
+      } else if (ext === '.ogg') {
+        contentType = 'audio/ogg';
+      }
+      console.log(`Using content type from extension: ${contentType} for ${path.basename(filePath)}`);
+    }
+    
+    // Get file stats to set Content-Length header
+    const stats = fs.statSync(filePath);
+    
+    // Use writeHead instead of setHeader to ensure headers are properly set
+    // This is critical for Twilio which requires proper Content-Type headers
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': stats.size,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
+      'Cache-Control': 'no-cache',
+      'X-Content-Type-Options': 'nosniff'  // Prevents browsers from MIME-sniffing
+    });
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } else {
+    // File not found
+    console.error(`Audio file not found: ${filePath}`);
+    res.status(404).send('Audio file not found');
+  }
+});
+
+app.use('/js', express.static(path.join(publicDir, 'js')));
+app.use('/css', express.static(path.join(publicDir, 'css')));
+app.get('/voice-clone-demo', (req, res) => {
+  res.sendFile(path.join(publicDir, 'voice-clone-demo.html'));
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+// Test endpoint
+app.get('/test', (req, res) => {
+  res.json({ 
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    env: {
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: process.env.PORT,
+      MONGODB_STATUS: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      TWILIO_CONFIGURED: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
+      TWILIO_PHONE: process.env.TWILIO_PHONE_NUMBER || 'not set'
+    }
+  });
+});
+
+// API routes
+app.use('/api', routes);
+
+// Voice Cloning System routes
+app.use('/api/voice-clone', voiceCloneSystemRoutes);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error occurred:', err);
+  res.status(500).json({ 
+    message: 'Something went wrong!',
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+  });
+});
+
+// Connect to MongoDB and start server
+async function startServer() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('Connected to MongoDB successfully');
+
+    // Start HTTP server first
+    const server = app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+
+    // Initialize WebSocket server after HTTP server is ready
+    server.on('listening', () => {
+      try {
+        const wss = new WebSocket.Server({ 
+          server,
+          path: '/ws'
+        });
+        console.log('WebSocket server created');
+
+        if (typeof setupWebSocketServer !== 'function') {
+          throw new Error('setupWebSocketServer is not available');
+        }
+
+        global.wsServer = setupWebSocketServer(wss); // This is for the /ws path
+        console.log('General WebSocket server (/ws) initialized successfully');
+
+        // Initialize WebSocket server for Twilio media streams
+        const mediaWss = new WebSocket.Server({
+          server,
+          path: '/media',
+          clientTracking: true,
+          maxPayload: 65536, // 64KB for audio chunks
+          handleProtocols: (protocols) => {
+            // Accept any protocol from Twilio
+            if (protocols && protocols.length > 0) {
+              console.log('Accepting protocol:', protocols[0]);
+              return protocols[0];
+            }
+            return '';
+          }
+        });
+        console.log('Media WebSocket server created on /media path with Twilio-specific configuration');
+        
+        // Use new MediaWebSocketHandler
+        new MediaWebSocketHandler(mediaWss, callController);
+        console.log('Twilio Media WebSocket Handler initialized successfully');
+        
+        // Initialize WebSocket server for voice cloning
+        const voiceCloneWss = new WebSocket.Server({
+          server,
+          path: '/voice-clone-ws',
+          clientTracking: true,
+          maxPayload: 65536 // 64KB for audio chunks
+        });
+        console.log('Voice Cloning WebSocket server created on /voice-clone-ws path');
+        
+        // Initialize Voice Clone WebSocket handler
+        voiceCloneWebSocketHandler.initialize(voiceCloneWss);
+        voiceCloneWebSocketHandler.startHealthChecks();
+        console.log('Voice Cloning WebSocket Handler initialized successfully');
+        
+      } catch (wsError) {
+        console.error('Failed to initialize WebSocket server:', wsError);
+        // Continue running even if WebSocket setup fails
+      }
+    });
+
+    // Handle server shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received. Shutting down gracefully...');
+      server.close(() => {
+        mongoose.connection.close();
+        process.exit(0);
+      });
+    });
+
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
+
+module.exports = app;
